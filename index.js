@@ -1,9 +1,8 @@
-// index.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -18,14 +17,13 @@ app.use(
 );
 app.use(express.json());
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 /* ---------------------- ROOT ---------------------- */
 app.get("/", (req, res) => {
-  res.send("Server is running with ChatGPT 🚀");
+  res.send("Server is running 🚀");
 });
+
+/* ---------------------- GEMINI SETUP ---------------------- */
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 /* ---------------------- ROADMAP API ---------------------- */
 app.post("/api/roadmap", async (req, res) => {
@@ -33,16 +31,11 @@ app.post("/api/roadmap", async (req, res) => {
     const { topic } = req.body;
     if (!topic) return res.status(400).json({ error: "Topic required" });
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert curriculum designer.",
-        },
-        {
-          role: "user",
-          content: `
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    const prompt = `
+You are an expert curriculum designer.
+
 Create a step-by-step learning roadmap for "${topic}"
 from beginner to advanced.
 
@@ -59,15 +52,10 @@ Return ONLY valid JSON:
     "Step 5: Real-world Projects"
   ]
 }
-`,
-        },
-      ],
-    });
+`;
 
-    const clean = response.choices[0].message.content
-      .replace(/```json|```/g, "")
-      .trim();
-
+    const result = await model.generateContent(prompt);
+    const clean = result.response.text().replace(/```json|```/g, "").trim();
     res.json(JSON.parse(clean));
   } catch (err) {
     console.error("Roadmap Error:", err.message);
@@ -89,16 +77,9 @@ app.post("/api/articles", async (req, res) => {
     const { topic } = req.body;
     if (!topic) return res.status(400).json({ error: "Topic required" });
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert educational content curator.",
-        },
-        {
-          role: "user",
-          content: `
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    const prompt = `
 Suggest 5 educational, beginner-friendly articles for "${topic}"
 from trusted learning platforms like freeCodeCamp, MDN, GeeksforGeeks, W3Schools.
 
@@ -112,15 +93,10 @@ Return ONLY JSON array:
     "url": ""
   }
 ]
-`,
-        },
-      ],
-    });
+`;
 
-    const clean = response.choices[0].message.content
-      .replace(/```json|```/g, "")
-      .trim();
-
+    const result = await model.generateContent(prompt);
+    const clean = result.response.text().replace(/```json|```/g, "").trim();
     res.json(JSON.parse(clean));
   } catch {
     res.json([
@@ -140,16 +116,11 @@ app.post("/api/projects", async (req, res) => {
     const { topic } = req.body;
     if (!topic) return res.status(400).json({ error: "Topic required" });
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert project mentor.",
-        },
-        {
-          role: "user",
-          content: `
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    const prompt = `
+You are an expert project mentor.
+
 Suggest 5 educational project ideas for "${topic}"
 suitable for beginners to advanced learners.
 
@@ -162,15 +133,10 @@ Return ONLY JSON array:
   "Project 4",
   "Project 5"
 ]
-`,
-        },
-      ],
-    });
+`;
 
-    const clean = response.choices[0].message.content
-      .replace(/```json|```/g, "")
-      .trim();
-
+    const result = await model.generateContent(prompt);
+    const clean = result.response.text().replace(/```json|```/g, "").trim();
     res.json(JSON.parse(clean));
   } catch {
     res.json([
@@ -182,39 +148,48 @@ Return ONLY JSON array:
     ]);
   }
 });
-
 /* ---------------------- CHATBOT API ---------------------- */
 app.post("/api/chat", async (req, res) => {
   try {
     const { message, history = [] } = req.body;
-    if (!message) return res.status(400).json({ error: "Message is required" });
 
-    const messages = [
-      {
-        role: "system",
-        content: `
+    if (!message) {
+      return res.status(400).json({ error: "Message is required" });
+    }
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+    });
+
+    const systemPrompt = `
 You are an AI education mentor.
+
+Your role:
 - Help students with learning paths, roadmaps, resources, and career guidance.
 - Explain concepts in a simple, beginner-friendly way.
 - Suggest next steps, courses, projects, and study plans.
 - If the question is NOT related to education or learning, politely redirect them back to educational topics.
+
 Rules:
 - Be concise, clear, and structured.
 - No emojis.
 - No motivational fluff.
 - Focus ONLY on education, skills, and learning paths.
-        `,
-      },
-      ...history,
-      { role: "user", content: message },
-    ];
+`;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
+    const chat = model.startChat({
+      history: [
+        {
+          role: "user",
+          parts: [{ text: systemPrompt }],
+        },
+        ...history,
+      ],
     });
 
-    const reply = response.choices[0].message.content.trim();
+    const result = await chat.sendMessage(message);
+    const reply = result.response.text();
+
     res.json({ reply });
   } catch (err) {
     console.error("Chatbot Error:", err.message);
@@ -224,6 +199,7 @@ Rules:
     });
   }
 });
+
 
 /* ---------------------- YOUTUBE API ---------------------- */
 app.post("/api/youtube", async (req, res) => {
@@ -280,6 +256,7 @@ app.post("/api/github", async (req, res) => {
     const { query } = req.body;
     const token = process.env.GITHUB_API_KEY;
 
+    // Educational repos filter
     const searchQuery = query + " tutorial example learning";
 
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(
